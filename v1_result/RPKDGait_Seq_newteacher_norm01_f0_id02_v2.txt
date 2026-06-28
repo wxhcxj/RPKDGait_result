@@ -1,0 +1,181 @@
+data_cfg:
+  dataset_name: SUSTech1K
+  dataset_root: /data/lzh/DataSet/OpenGait-master/SUSTech1K_HS
+  dataset_partition: ./datasets/SUSTech1K/SUSTech1K.json
+  num_workers: 8
+  cache: true
+  data_in_use: [True, True] # heatmap, sil
+  remove_no_gallery: false
+  test_dataset_name: SUSTech1K
+  rpkd_teacher:
+    enable: true
+    cache_root: /data/lzh/DataSet/RPKDGait/SUSTech1K-RobustCap-output
+    token_name: robustcap_gait_motion_token.npy
+    valid_mask_name: valid_mask.npy
+    reliability_target_name: reliability_target.npy
+    phase_cache_root: /data/lzh/DataSet/RPKDGait/SUSTech1K-RPKD-cache
+    phase_label_name: phase_label.npy
+    cache_in_memory: true
+    preload: true
+    token_dim: 114
+
+evaluator_cfg:
+  enable_float16: true
+  restore_ckpt_strict: false
+  restore_hint: 50000
+  save_name: RPKDGait_MH02_Rel02
+  eval_func: evaluate_indoor_dataset
+  sampler:
+    batch_shuffle: false
+    batch_size: 1
+    sample_type: all_ordered
+    frames_all_limit: 720
+  metric: euc
+  transform:
+    - type: BaseSilCuttingTransform
+
+loss_cfg:
+  - loss_term_weight: 1.0
+    margin: 0.2
+    type: TripletLoss
+    log_prefix: triplet
+  - loss_term_weight: 1.0
+    scale: 16
+    type: CrossEntropyLoss
+    log_prefix: softmax
+    log_accuracy: true
+  - loss_term_weight: 1.0
+    type: MotionTokenDistillLoss
+    log_prefix: motion_distill
+    loss_type: smooth_l1
+    beta: 1.0
+    normalize: false
+    gate_power: 2.0
+    gate_min: 0.0
+    gate_norm: false
+    token_group_mode: robustcap_gait_root_leg
+    pose_weight: 1.0
+    tran_weight: 1.0
+    vel_weight: 1.0
+    acc_weight: 1.0
+    group_normalize: true
+    sequence_align_weight: 0.1
+    sequence_align_use_gate: true
+    sequence_align_normalize: true
+    sequence_project_mode: robustcap_gait_root_leg
+    norm_align_weight: 0.1
+    frame_cos_weight: 0.0
+  - loss_term_weight: 1.0
+    margin: 0.2
+    type: TripletLoss
+    log_prefix: motion_id_triplet
+  - loss_term_weight: 1.0
+    scale: 16
+    type: CrossEntropyLoss
+    log_prefix: motion_id_softmax
+    log_accuracy: true
+  - loss_term_weight: 0.2
+    type: MotionIdentityDistillLoss
+    log_prefix: motion_identity_distill
+    loss_type: cosine
+  - loss_term_weight: 0.2
+    type: CrossModalReliabilityLoss
+    log_prefix: reliability
+    loss_type: mse
+  - loss_term_weight: 0.0
+    type: PhaseSupervisionLoss
+    log_prefix: phase
+  - loss_term_weight: 0.0
+    type: CounterfactualConsistencyLoss
+    log_prefix: counterfactual
+    embedding_weight: 1.0
+    motion_weight: 0.5
+    teacher_motion_weight: 0.5
+
+model_cfg:
+  model: RPKDGait
+  Backbone:
+    in_channels: 3
+    blocks:
+      - 1
+      - 1
+      - 1
+      - 1
+    C: 2
+  SeparateBNNecks:
+    class_num: 250
+  RPKD:
+    enable_motion_hallucination: true
+    enable_motion_identity_distill: true
+    enable_reliability: true
+    enable_phase_supervision: false
+    enable_counterfactual_aug: false
+    teacher_token_key: teacher_motion_token
+    teacher_mask_key: teacher_valid_mask
+    reliability_target_key: reliability_target
+    phase_label_key: phase_label
+    motion_token_dim: 114
+    motion_token_level: frame
+    adapter_hidden_dim: 512
+    adapter_dropout: 0.1
+    motion_identity_hidden_dim: 512
+    motion_identity_dropout: 0.1
+    motion_identity_parts: 16
+    reliability_level: frame
+    reliability_hidden_dim: 256
+    reliability_dropout: 0.1
+    phase_num_classes: 5
+    phase_hidden_dim: 256
+    phase_dropout: 0.1
+    counterfactual_aug_prob: 0.5
+    counterfactual_skip_unapplied: true
+    counterfactual_frame_drop_prob: 0.1
+    counterfactual_channel_drop_prob: 0.1
+    counterfactual_erase_prob: 0.25
+    counterfactual_erase_ratio: 0.2
+    counterfactual_noise_std: 0.02
+
+optimizer_cfg:
+  lr: 0.1
+  momentum: 0.9
+  solver: SGD
+  weight_decay: 0.0005
+
+scheduler_cfg:
+  gamma: 0.1
+  milestones:
+    - 20000
+    - 30000
+    - 40000
+  scheduler: MultiStepLR
+
+trainer_cfg:
+  enable_float16: true
+  fix_BN: false
+  with_test: false
+  log_iter: 100
+  restore_ckpt_strict: false
+  restore_hint: 0
+  save_iter: 10000
+  save_name: RPKDGait
+  sync_BN: true
+  total_iter: 50000
+  sampler:
+    batch_shuffle: true
+    batch_size:
+      - 8
+      - 8
+    frames_num_fixed: 10
+    frames_skip_num: 4
+    sample_type: fixed_ordered
+    type: TripletSampler
+  transform:
+    - type: Compose
+      trf_cfg:
+        - type: RandomPerspective
+          prob: 0.2
+        - type: BaseSilCuttingTransform
+        - type: RandomHorizontalFlip
+          prob: 0.2
+        - type: RandomRotate
+          prob: 0.2
